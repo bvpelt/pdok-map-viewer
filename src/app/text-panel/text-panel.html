@@ -1,0 +1,16 @@
+<div class="panel-content">
+  <h3>Layers</h3>
+  <ul class="layer-list">
+    <!-- Use new @for loop to iterate over the signal directly -->
+    @for (layer of layerManager.layers(); track layer.id) {
+      <li>
+        <input 
+          type="checkbox" 
+          [id]="layer.id"
+          [checked]="layer.visible"
+          (change)="onToggle($event, layer.id)">
+        <label [for]="layer.id">{{ layer.name }}</label>
+      </li>
+    }
+  </ul>
+</div>
