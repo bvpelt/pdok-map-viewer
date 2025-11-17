@@ -1,16 +1,37 @@
 <div class="panel-content">
-  <h3>Layers</h3>
+  <!-- Section 1: Base Maps (Radio Buttons) -->
+  <h3>Basiskaart</h3>
   <ul class="layer-list">
-    <!-- Use new @for loop to iterate over the signal directly -->
+    @for (basemap of layerManager.availableBaseMaps(); track basemap.id) {
+    <li>
+      <input
+        type="radio"
+        name="basemap-group"
+        [id]="basemap.id"
+        [value]="basemap.id"
+        [checked]="basemap.id === layerManager.activeBaseMap()"
+        (change)="onBaseMapChange($event)"
+      />
+      <label [for]="basemap.id">{{ basemap.name }}</label>
+    </li>
+    }
+  </ul>
+
+  <!-- Section 2: Overlay Layers (Checkboxes) -->
+  <h3 class="mt-4">Kaartlagen</h3>
+  <ul class="layer-list">
     @for (layer of layerManager.layers(); track layer.id) {
-      <li>
-        <input 
-          type="checkbox" 
-          [id]="layer.id"
-          [checked]="layer.visible"
-          (change)="onToggle($event, layer.id)">
-        <label [for]="layer.id">{{ layer.name }}</label>
-      </li>
+    <li>
+      <input
+        type="checkbox"
+        [id]="layer.id"
+        [checked]="layer.visible"
+        (change)="onToggleOverlay($event, layer.id)"
+      />
+      <label [for]="layer.id">{{ layer.name }}</label>
+    </li>
+    } @if (layerManager.layers().length === 0) {
+    <li class="empty-state">Geen kaartlagen geladen.</li>
     }
   </ul>
 </div>

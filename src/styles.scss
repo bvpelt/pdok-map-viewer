@@ -1,7 +1,23 @@
 /* You can add global styles to this file, and also import other style files */
+
+/* Make app fill the entire screen */
 html,
 body,
-app-root,
-.main-container {
-    height: 100vh;
+app-root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    /* Prevent body scrollbars */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+
+/* Make the main container in app.component fill the screen */
+.main-container {
+    width: 100%;
+    height: 100%;
+}
+
+/* OpenLayers CSS (if not already in angular.json) */
+@import 'ol/ol.css';

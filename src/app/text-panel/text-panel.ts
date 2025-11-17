@@ -12,8 +12,16 @@ export class TextPanel {
   // Make the service public so the template can access it
   constructor(public layerManager: LayerManager) {}
 
-  onToggle(event: Event, id: string) {
+  // Handler for overlay checkboxes
+  onToggleOverlay(event: Event, id: string) {
     const checkbox = event.target as HTMLInputElement;
     this.layerManager.toggleLayerVisibility(id, checkbox.checked);
+  }
+
+  // Handler for basemap radio buttons
+  onBaseMapChange(event: Event): void {
+    const radio = event.target as HTMLInputElement;
+    console.log("TextPanel - selected map: " + radio.value);
+    this.layerManager.setActiveBaseMap(radio.value);
   }
 }
