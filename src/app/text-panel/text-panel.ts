@@ -21,7 +21,7 @@ export class TextPanel {
   // Handler for basemap radio buttons
   onBaseMapChange(event: Event): void {
     const radio = event.target as HTMLInputElement;
-    console.log("TextPanel - selected map: " + radio.value);
+    console.log('TextPanel - selected map: ' + radio.value);
     this.layerManager.setActiveBaseMap(radio.value);
   }
 }

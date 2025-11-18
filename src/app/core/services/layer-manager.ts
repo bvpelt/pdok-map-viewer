@@ -1,16 +1,9 @@
 import { Injectable, signal, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
 import BaseLayer from 'ol/layer/Base';
-import { TileMatrixSet, TileMatrix, OGCCollection } from '../map/map.interface';
 import TileLayer from 'ol/layer/Tile';
-import { OSM, XYZ } from 'ol/source';
-import MVT from 'ol/format/MVT.js';
 import VectorTileLayer from 'ol/layer/VectorTile';
-import VectorTileSource from 'ol/source/VectorTile.js';
-import { firstValueFrom } from 'rxjs';
-import { get as getProjection } from 'ol/proj';
-import { getWidth, getTopLeft } from 'ol/extent';
-import TileGrid from 'ol/tilegrid/TileGrid';
+import { BrtLayerService } from './brt-layer';
+import { OsmLayerService } from './osm-layer';
 
 // --- INTERFACES ---
 // Interface for Overlay Layers
@@ -42,143 +35,32 @@ export class LayerManager {
   private readonly _layers = signal<AppLayer[]>([]);
   public readonly layers = this._layers.asReadonly();
 
-  // PDOK OGC API configuration
-  private readonly http = inject(HttpClient);
-  private readonly pdokBaseUrl = 'https://api.pdok.nl/kadaster/brt-achtergrondkaart/ogc/v1';
-  private readonly tileMatrixSetId = 'NetherlandsRDNewQuad';
+  // Inject layer services
+  private readonly brtLayerService = inject(BrtLayerService);
+  private readonly osmLayerService = inject(OsmLayerService);
 
   constructor() {
-    this.initializeBaseMapsAsync();
-  }
-
-  /* BRT */
-  private async getTileMatrixSet(): Promise<TileMatrixSet | null> {
-    try {
-      const url = `${this.pdokBaseUrl}/tileMatrixSets/${this.tileMatrixSetId}`;
-      const response = await firstValueFrom(
-        this.http.get<TileMatrixSet>(url, {
-          headers: { Accept: 'application/json' },
-        })
-      );
-      return response;
-    } catch (error) {
-      console.error('Error fetching tile matrix set:', error);
-      return null;
-    }
-  }
-
-  private async getBrtStyle(styleName: string = 'standaard'): Promise<any | null> {
-    try {
-      const url = `${this.pdokBaseUrl}/styles/${styleName}?f=json`;
-      const response = await firstValueFrom(
-        this.http.get<any>(url, {
-          headers: { Accept: 'application/json' },
-        })
-      );
-      return response;
-    } catch (error) {
-      console.error('Error fetching BRT style:', error);
-      return null;
-    }
-  }
-
-  private async createBrtVectorTileLayer(
-    tileMatrixSet: TileMatrixSet,
-    styleName: string = 'standaard'
-  ): Promise<VectorTileLayer> {
-    // Build tile URL template for vector tiles
-    const brtUrlTemplate = `${this.pdokBaseUrl}/tiles/NetherlandsRDNewQuad/{z}/{y}/{x}?f=mvt`;
-
-    // Get the projection
-    const projection = getProjection('EPSG:28992');
-    if (!projection) {
-      throw new Error('EPSG:28992 projection not found');
-    }
-
-    // Create resolutions from the TileMatrixSet
-    const resolutions: number[] = [];
-    const tileSize = 256; // Standard tile size
-
-    // Sort tile matrices by scale (descending) to get correct zoom levels
-    const sortedMatrices = [...(tileMatrixSet.tileMatrices || [])].sort(
-      (a, b) => b.scaleDenominator - a.scaleDenominator
-    );
-
-    sortedMatrices.forEach((matrix: TileMatrix) => {
-      // Calculate resolution from scale denominator
-      // Resolution = scaleDenominator * 0.00028 (standard pixel size in meters)
-      resolutions.push(matrix.scaleDenominator * 0.00028);
-    });
-
-    // Get extent from projection or use Netherlands bounds
-    const extent = projection.getExtent() || [-285401.92, 22598.08, 595401.92, 903401.92];
-    const origin = getTopLeft(extent);
-
-    // Create tile grid
-    const tileGrid = new TileGrid({
-      origin: origin,
-      resolutions: resolutions,
-      tileSize: tileSize,
-    });
-
-    const vectorTileSource = new VectorTileSource({
-      format: new MVT(),
-      url: brtUrlTemplate,
-      projection: projection,
-      attributions: ['© PDOK'],
-      tileGrid: tileGrid,
-    });
-
-    const vectorTileLayer = new VectorTileLayer({
-      source: vectorTileSource,
-      properties: {
-        name: 'BRT Achtergrondkaart',
-        type: 'background',
-      },
-    });
-
-    // Fetch and apply the style
-    const styleJson = await this.getBrtStyle(styleName);
-    if (styleJson) {
-      try {
-        // Apply the Mapbox GL style to the vector tile layer
-        await this.applyMapboxStyle(vectorTileLayer, styleJson);
-        console.log(`BRT style '${styleName}' applied successfully`);
-      } catch (error) {
-        console.error('Error applying BRT style:', error);
-      }
-    }
-
-    return vectorTileLayer;
-  }
-
-  private async applyMapboxStyle(layer: VectorTileLayer, styleJson: any): Promise<void> {
-    // Use ol-mapbox-style to apply the style
-    // First, we need to import the necessary function
-    const { applyStyle } = await import('ol-mapbox-style');
-
-    // Apply the style to the layer
-    await applyStyle(layer, styleJson, {
-      resolutions: layer.getSource()?.getTileGrid()?.getResolutions(),
+    this.initializeBaseMapsAsync().then(() => {
+      console.log('LayerManager ready');
     });
   }
-  /* BRT */
 
+  /**
+   * Initializes all base map layers
+   */
   private async initializeBaseMapsAsync(): Promise<void> {
     const baseMaps: BaseMap[] = [];
 
     try {
       // 1. PDOK BRT (OGC API Vector Tiles)
-      const tileMatrixSet = await this.getTileMatrixSet();
-
-      if (!tileMatrixSet) {
-        throw new Error('Failed to fetch TileMatrixSet from PDOK.');
-      }
-
-      const pdokBrtLayer = await this.createBrtVectorTileLayer(tileMatrixSet, 'standaard');
+      console.log('Initializing PDOK BRT layer...');
+      const pdokBrtLayer = await this.brtLayerService.createLayer('standaard');
       pdokBrtLayer.set('id', 'pdok-brt');
-      baseMaps.push({ id: 'pdok-brt', name: 'PDOK BRT', layer: pdokBrtLayer });
-
+      baseMaps.push({
+        id: 'pdok-brt',
+        name: 'PDOK BRT',
+        layer: pdokBrtLayer,
+      });
       console.log('PDOK BRT layer initialized successfully');
     } catch (error) {
       console.error('Could not initialize PDOK BRT Vector Layer:', error);
@@ -187,16 +69,15 @@ export class LayerManager {
     }
 
     // 2. OpenStreetMap (OSM) - Always add as a fallback
-    // OSM needs to be reprojected to EPSG:28992
-    const osmLayer = new TileLayer({
-      source: new XYZ({
-        url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-        attributions: ['© OpenStreetMap contributors'],
-        // OSM tiles are in EPSG:3857, OpenLayers will reproject to EPSG:28992
-      }),
-    });
+    console.log('Initializing OSM layer...');
+    const osmLayer = this.osmLayerService.createLayer();
     osmLayer.set('id', 'osm');
-    baseMaps.push({ id: 'osm', name: 'OpenStreetMap', layer: osmLayer });
+    baseMaps.push({
+      id: 'osm',
+      name: 'OpenStreetMap',
+      layer: osmLayer,
+    });
+    console.log('OSM layer initialized successfully');
 
     // 3. Set the signal with all available basemaps
     console.log('Setting availableBaseMaps signal with', baseMaps.length, 'basemaps');
@@ -210,26 +91,81 @@ export class LayerManager {
 
   // --- BASEMAP METHODS ---
 
+  /**
+   * Sets the active base map by ID
+   * @param id The ID of the base map to activate
+   */
   setActiveBaseMap(id: string): void {
+    console.log('=== LayerManager - setActiveBaseMap ===');
+    console.log('New active basemap ID:', id);
+    console.log('Current active basemap ID:', this._activeBaseMapId());
     this._activeBaseMapId.set(id);
+    console.log('Signal updated to:', this._activeBaseMapId());
     this.updateBaseMapVisibility();
+    console.log('=== End setActiveBaseMap ===');
   }
 
+  /**
+   * Updates the visibility of all base maps based on the active ID
+   */
   private updateBaseMapVisibility(): void {
     const activeId = this.activeBaseMap();
     this.availableBaseMaps().forEach((basemap) => {
+      console.log(
+        'updateBaseMapVisibility - basemap:',
+        basemap.id,
+        'active:',
+        activeId.valueOf(),
+        'set to:',
+        basemap.id === activeId
+      );
       basemap.layer.setVisible(basemap.id === activeId);
     });
   }
 
+  /**
+   * Adds a new base map layer dynamically
+   * @param id Unique identifier for the base map
+   * @param name Display name for the base map
+   * @param layer The OpenLayers layer object
+   */
+  addBaseMap(id: string, name: string, layer: TileLayer<any> | VectorTileLayer): void {
+    layer.set('id', id);
+    this._availableBaseMaps.update((current) => [...current, { id, name, layer }]);
+    this.updateBaseMapVisibility();
+  }
+
+  /**
+   * Removes a base map by ID
+   * @param id The ID of the base map to remove
+   */
+  removeBaseMap(id: string): void {
+    // Don't remove if it's the active one
+    if (this.activeBaseMap() === id) {
+      console.warn('Cannot remove active base map. Switch to another base map first.');
+      return;
+    }
+
+    this._availableBaseMaps.update((current) => current.filter((bm) => bm.id !== id));
+  }
+
   // --- OVERLAY LAYER METHODS ---
 
+  /**
+   * Adds an overlay layer
+   * @param layerData The layer data including id, name, visibility, and layer object
+   */
   addLayer(layerData: AppLayer): void {
     // Ensure layer visibility matches its state
     layerData.layer.setVisible(layerData.visible);
     this._layers.update((current) => [...current, layerData]);
   }
 
+  /**
+   * Toggles the visibility of an overlay layer
+   * @param id The ID of the layer to toggle
+   * @param visible Whether the layer should be visible
+   */
   toggleLayerVisibility(id: string, visible: boolean): void {
     // Update the signal state
     this._layers.update((currentLayers) =>
@@ -239,5 +175,13 @@ export class LayerManager {
     // Update the OpenLayers layer object
     const layerToUpdate = this.layers().find((l) => l.id === id);
     layerToUpdate?.layer.setVisible(visible);
+  }
+
+  /**
+   * Removes an overlay layer by ID
+   * @param id The ID of the layer to remove
+   */
+  removeLayer(id: string): void {
+    this._layers.update((current) => current.filter((l) => l.id !== id));
   }
 }

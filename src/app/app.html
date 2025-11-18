@@ -1,9 +1,5 @@
 <div class="main-container">
-  <as-split 
-      direction="horizontal" 
-      [gutterSize]="7"
-      (dragEnd)="onDragEnd($event)">
-
+  <as-split direction="horizontal" [gutterSize]="7" (dragEnd)="onDragEnd($event)">
     <as-split-area [size]="20">
       <app-text-panel></app-text-panel>
     </as-split-area>
@@ -11,6 +7,5 @@
     <as-split-area [size]="80">
       <app-map-panel></app-map-panel>
     </as-split-area>
-
   </as-split>
 </div>
