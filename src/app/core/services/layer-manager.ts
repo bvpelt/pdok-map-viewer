@@ -67,7 +67,25 @@ export class LayerManager {
     }
   }
 
-  private createBrtVectorTileLayer(tileMatrixSet: TileMatrixSet): VectorTileLayer {
+  private async getBrtStyle(styleName: string = 'standaard'): Promise<any | null> {
+    try {
+      const url = `${this.pdokBaseUrl}/styles/${styleName}?f=json`;
+      const response = await firstValueFrom(
+        this.http.get<any>(url, {
+          headers: { Accept: 'application/json' },
+        })
+      );
+      return response;
+    } catch (error) {
+      console.error('Error fetching BRT style:', error);
+      return null;
+    }
+  }
+
+  private async createBrtVectorTileLayer(
+    tileMatrixSet: TileMatrixSet,
+    styleName: string = 'standaard'
+  ): Promise<VectorTileLayer> {
     // Build tile URL template for vector tiles
     const brtUrlTemplate = `${this.pdokBaseUrl}/tiles/NetherlandsRDNewQuad/{z}/{y}/{x}?f=mvt`;
 
@@ -119,7 +137,30 @@ export class LayerManager {
       },
     });
 
+    // Fetch and apply the style
+    const styleJson = await this.getBrtStyle(styleName);
+    if (styleJson) {
+      try {
+        // Apply the Mapbox GL style to the vector tile layer
+        await this.applyMapboxStyle(vectorTileLayer, styleJson);
+        console.log(`BRT style '${styleName}' applied successfully`);
+      } catch (error) {
+        console.error('Error applying BRT style:', error);
+      }
+    }
+
     return vectorTileLayer;
+  }
+
+  private async applyMapboxStyle(layer: VectorTileLayer, styleJson: any): Promise<void> {
+    // Use ol-mapbox-style to apply the style
+    // First, we need to import the necessary function
+    const { applyStyle } = await import('ol-mapbox-style');
+
+    // Apply the style to the layer
+    await applyStyle(layer, styleJson, {
+      resolutions: layer.getSource()?.getTileGrid()?.getResolutions(),
+    });
   }
   /* BRT */
 
@@ -134,7 +175,7 @@ export class LayerManager {
         throw new Error('Failed to fetch TileMatrixSet from PDOK.');
       }
 
-      const pdokBrtLayer = this.createBrtVectorTileLayer(tileMatrixSet);
+      const pdokBrtLayer = await this.createBrtVectorTileLayer(tileMatrixSet, 'standaard');
       pdokBrtLayer.set('id', 'pdok-brt');
       baseMaps.push({ id: 'pdok-brt', name: 'PDOK BRT', layer: pdokBrtLayer });
 
@@ -158,9 +199,12 @@ export class LayerManager {
     baseMaps.push({ id: 'osm', name: 'OpenStreetMap', layer: osmLayer });
 
     // 3. Set the signal with all available basemaps
+    console.log('Setting availableBaseMaps signal with', baseMaps.length, 'basemaps');
     this._availableBaseMaps.set(baseMaps);
+    console.log('availableBaseMaps signal set');
 
     // 4. Set initial visibility based on the active ID
+    console.log('Calling updateBaseMapVisibility for initial state');
     this.updateBaseMapVisibility();
   }
 
