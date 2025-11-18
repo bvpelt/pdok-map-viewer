@@ -4,6 +4,7 @@ import TileLayer from 'ol/layer/Tile';
 import VectorTileLayer from 'ol/layer/VectorTile';
 import { BrtLayerService } from './brt-layer';
 import { OsmLayerService } from './osm-layer';
+import { LuchtfotoLayer } from './luchtfoto-layer';
 
 // --- INTERFACES ---
 // Interface for Overlay Layers
@@ -38,6 +39,7 @@ export class LayerManager {
   // Inject layer services
   private readonly brtLayerService = inject(BrtLayerService);
   private readonly osmLayerService = inject(OsmLayerService);
+  private readonly luchtfotoLayerService = inject(LuchtfotoLayer);
 
   constructor() {
     this.initializeBaseMapsAsync().then(() => {
@@ -78,6 +80,17 @@ export class LayerManager {
       layer: osmLayer,
     });
     console.log('OSM layer initialized successfully');
+
+    // Luchtfotos
+    console.log('Initializing Luchtfotos');
+    const luchtfotoLayer = await this.luchtfotoLayerService.createLayer();
+    luchtfotoLayer.set('id', 'luchtfoto');
+    baseMaps.push({
+      id: 'luchtfoto',
+      name: 'Luchtfoto',
+      layer: luchtfotoLayer,
+    });
+    console.log('Luchtfoto layer initialized successfully');
 
     // 3. Set the signal with all available basemaps
     console.log('Setting availableBaseMaps signal with', baseMaps.length, 'basemaps');
