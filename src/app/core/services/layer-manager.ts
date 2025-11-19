@@ -5,6 +5,7 @@ import VectorTileLayer from 'ol/layer/VectorTile';
 import { BrtLayerService } from './brt-layer';
 import { OsmLayerService } from './osm-layer';
 import { LuchtfotoLayer } from './luchtfoto-layer';
+import { BagLayerService } from './bag-layer';
 
 // --- INTERFACES ---
 // Interface for Overlay Layers
@@ -12,7 +13,7 @@ export interface AppLayer {
   id: string;
   name: string;
   visible: boolean;
-  layer: BaseLayer; // The actual OpenLayers object
+  layer: TileLayer<any> | VectorTileLayer; // BaseLayer; // The actual OpenLayers object
 }
 
 // Interface for Base Maps
@@ -40,10 +41,14 @@ export class LayerManager {
   private readonly brtLayerService = inject(BrtLayerService);
   private readonly osmLayerService = inject(OsmLayerService);
   private readonly luchtfotoLayerService = inject(LuchtfotoLayer);
+  private readonly bagLayerService = inject(BagLayerService);
 
   constructor() {
     this.initializeBaseMapsAsync().then(() => {
-      console.log('LayerManager ready');
+      console.log('LayerManager backgrounds loaded');
+    });
+    this.initializeDefaultOverlayAsync().then(() => {
+      console.log('LayerManager overlays loaded');
     });
   }
 
@@ -82,18 +87,22 @@ export class LayerManager {
     console.log('OSM layer initialized successfully');
 
     // Luchtfotos
-    console.log('Initializing Luchtfotos');
-    const luchtfotoLayer = await this.luchtfotoLayerService.createLayer();
-    luchtfotoLayer.set('id', 'luchtfoto');
-    baseMaps.push({
-      id: 'luchtfoto',
-      name: 'Luchtfoto',
-      layer: luchtfotoLayer,
-    });
-    console.log('Luchtfoto layer initialized successfully');
+    try {
+      console.log('Initializing Luchtfotos');
+      const luchtfotoLayer = await this.luchtfotoLayerService.createLayer();
+      luchtfotoLayer.set('id', 'luchtfoto');
+      baseMaps.push({
+        id: 'luchtfoto',
+        name: 'Luchtfoto',
+        layer: luchtfotoLayer,
+      });
+      console.log('Luchtfoto layer initialized successfully');
+    } catch (error) {
+      console.error('Could not initialize Luchtfoto Layer');
+    }
 
     // 3. Set the signal with all available basemaps
-    console.log('Setting availableBaseMaps signal with', baseMaps.length, 'basemaps');
+    console.log('Setting availableBaseMaps signal with', baseMaps.length, ' basemaps');
     this._availableBaseMaps.set(baseMaps);
     console.log('availableBaseMaps signal set');
 
@@ -102,6 +111,29 @@ export class LayerManager {
     this.updateBaseMapVisibility();
   }
 
+  private async initializeDefaultOverlayAsync(): Promise<void> {
+    const overlayMaps: AppLayer[] = [];
+
+    try {
+      // 1. BAG (OGC API Vector Tiles)
+      console.log('Initializing BAG layer...');
+      const bagLayer = await this.bagLayerService.createLayer();
+      bagLayer.set('id', 'bag');
+      overlayMaps.push({
+        id: 'bag',
+        name: 'BAG',
+        layer: bagLayer,
+        visible: true,
+      });
+      console.log('BAG layer initialized successfully');
+    } catch (error) {
+      console.error('Could not initialize BAG layer');
+    }
+    // 3. Set the signal with all available basemaps
+    console.log('Setting overlay layers signal with', overlayMaps.length, ' overlays');
+    this._layers.set(overlayMaps);
+    console.log('layers signal set');
+  }
   // --- BASEMAP METHODS ---
 
   /**

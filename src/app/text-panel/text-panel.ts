@@ -15,6 +15,7 @@ export class TextPanel {
   // Handler for overlay checkboxes
   onToggleOverlay(event: Event, id: string) {
     const checkbox = event.target as HTMLInputElement;
+    console.log("TextPanel - set layer: " + id + " to: " + checkbox.checked.valueOf());
     this.layerManager.toggleLayerVisibility(id, checkbox.checked);
   }
 

@@ -92,7 +92,7 @@ export class MapPanel implements AfterViewInit, OnDestroy {
       console.log('Effect 2: Map render called');
     });
 
-    // Effect to reactively update overlay layers
+    // Effect to reactively update overlay layers (Add, Remove, and Update Visibility)
     effect(() => {
       console.log('Effect 3 triggered: overlay layers effect');
 
@@ -101,14 +101,39 @@ export class MapPanel implements AfterViewInit, OnDestroy {
         return;
       }
 
+      // The layerManager.layers() signal contains the current state of all overlays,
+      // including their OpenLayers layer object and the desired 'visible' state.
       const overlayLayers = this.layerManager.layers();
       console.log('Effect 3: Overlay layers changed, count:', overlayLayers.length);
 
-      // Sync overlay layers with the map
-      // First, remove any layers from the map that are no longer in the service
+      // 1. Add new layers and update visibility for existing layers
+      overlayLayers.forEach((appLayer) => {
+        let olLayer = this.map
+          .getLayers()
+          .getArray()
+          .find((l) => l.get('id') === appLayer.id);
+
+        if (!olLayer) {
+          // Layer does not exist on the map yet, so add it
+          appLayer.layer.set('id', appLayer.id);
+          this.map.addLayer(appLayer.layer);
+          olLayer = appLayer.layer; // Use the newly added layer reference
+          console.log('Effect 3: Added overlay layer:', appLayer.id);
+        }
+
+        // **FIX: Explicitly update visibility of the layer**
+        // This handles cases where the layer exists but its visible state in the service has changed.
+        if (olLayer && olLayer.getVisible() !== appLayer.visible) {
+          olLayer.setVisible(appLayer.visible);
+          console.log(`Effect 3: Updated visibility for ${appLayer.id} to ${appLayer.visible}`);
+        }
+      });
+
+      // 2. Remove layers from the map that are no longer in the service
       this.map
         .getLayers()
         .getArray()
+        // Filter for layers that are overlays (have an 'id' and are NOT a basemap)
         .filter((olLayer) => olLayer.get('id') && !olLayer.get('isBaseMap'))
         .forEach((olLayer) => {
           if (!overlayLayers.find((appLayer) => appLayer.id === olLayer.get('id'))) {
@@ -117,19 +142,8 @@ export class MapPanel implements AfterViewInit, OnDestroy {
           }
         });
 
-      // Second, add any new layers from the service to the map
-      overlayLayers.forEach((appLayer) => {
-        const existingLayer = this.map
-          .getLayers()
-          .getArray()
-          .find((l) => l.get('id') === appLayer.id);
-
-        if (!existingLayer) {
-          appLayer.layer.set('id', appLayer.id);
-          this.map.addLayer(appLayer.layer);
-          console.log('Effect 3: Added overlay layer:', appLayer.id);
-        }
-      });
+      // Force map to render to show changes
+      this.map.render();
     });
   }
 
