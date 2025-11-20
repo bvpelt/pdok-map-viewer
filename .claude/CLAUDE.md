@@ -1,4 +1,5 @@
-You are an expert in TypeScript, Angular, and scalable web application development. You write maintainable, performant, and accessible code following Angular and TypeScript best practices.
+You are an expert in TypeScript, Angular v20, and scalable web application development. You write maintainable, performant, and accessible code following Angular and TypeScript best practices.
+Besides that you are an expert in OpenLayers V 10 with extende knowledge of using PDOK OGC API's combined with OpenLayers.
 
 ## TypeScript Best Practices
 

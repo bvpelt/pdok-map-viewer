@@ -1,37 +1,74 @@
-<div class="panel-content">
-  <!-- Section 1: Base Maps (Radio Buttons) -->
-  <h3>Basiskaart</h3>
-  <ul class="layer-list">
-    @for (basemap of layerManager.availableBaseMaps(); track basemap.id) {
-    <li>
-      <input
-        type="radio"
-        name="basemap-group"
-        [id]="basemap.id"
-        [value]="basemap.id"
-        [checked]="basemap.id === layerManager.activeBaseMap()"
-        (change)="onBaseMapChange($event)"
-      />
-      <label [for]="basemap.id">{{ basemap.name }}</label>
-    </li>
-    }
-  </ul>
+<div class="p-4 bg-white rounded-lg shadow-xl h-full flex flex-col space-y-6">
+  <h2 class="text-xl font-bold text-gray-800 border-b pb-2">Map Controls</h2>
 
-  <!-- Section 2: Overlay Layers (Checkboxes) -->
-  <h3 class="mt-4">Kaartlagen</h3>
-  <ul class="layer-list">
-    @for (layer of layerManager.layers(); track layer.id) {
-    <li>
-      <input
-        type="checkbox"
-        [id]="layer.id"
-        [checked]="layer.visible"
-        (change)="onToggleOverlay($event, layer.id)"
-      />
-      <label [for]="layer.id">{{ layer.name }}</label>
-    </li>
-    } @if (layerManager.layers().length === 0) {
-    <li class="empty-state">Geen kaartlagen geladen.</li>
-    }
-  </ul>
+  <section>
+    <h3 class="text-lg font-semibold text-gray-700 mb-3">Base Maps</h3>
+    <div class="space-y-2">
+      @for (basemap of layerManager.availableBaseMaps(); track basemap.id) {
+      <li>
+        <input
+          type="radio"
+          name="basemap"
+          [value]="basemap.id"
+          [checked]="basemap.id === layerManager.activeBaseMap()"
+          (change)="onBaseMapChange($event)"
+          class="form-radio text-indigo-600"
+        />
+        <span class="text-gray-900">{{ basemap.name }}</span>
+      </li>
+      }
+    </div>
+  </section>
+
+  <section>
+    <h3 class="text-lg font-semibold text-gray-700 mb-3 border-t pt-4">Overlay Layers</h3>
+    <div class="space-y-2">
+      @for (layer of layerManager.layersWithAvailability(); track layer.id) {
+      <div
+        class="flex items-center justify-between p-2 rounded-lg transition duration-150 ease-in-out"
+        [class.opacity-50]="!layer.isAvailable"
+        [class.hover:bg-gray-50]="layer.isAvailable"
+        [title]="!layer.isAvailable ? 'Unavailable at current zoom level' : ''"
+      >
+        <label class="flex items-center space-x-2 cursor-pointer">
+          <input
+            type="checkbox"
+            [checked]="layer.visible"
+            [disabled]="!layer.isAvailable"
+            (change)="onToggleOverlay($event, layer)"
+            class="form-checkbox text-pink-600"
+          />
+          <span class="text-gray-900">{{ layer.name }}</span>
+        </label>
+
+        @if (!layer.isAvailable) {
+        <span class="text-xs text-red-600 font-medium bg-red-100 px-2 py-0.5 rounded-full">
+          [Zoom Required]</span
+        >
+        } @else if (layer.isAvailable && layer.visible) {
+        <span class="text-xs text-green-600 font-medium bg-green-100 px-2 py-0.5 rounded-full">
+          [Visible]</span
+        >
+        } @else {
+        <span class="text-xs text-gray-500 font-medium bg-gray-100 px-2 py-0.5 rounded-full">
+          [Available]</span
+        >
+        }
+      </div>
+      }
+    </div>
+  </section>
+
+  <footer class="text-xs text-gray-500 mt-auto pt-4 border-t">
+    <p>
+      Current Map Resolution:
+      <span class="font-mono text-gray-700">
+        {{
+          layerManager.currentResolution() !== null
+            ? (layerManager.currentResolution() | number : '1.2-4')
+            : 'Loading...'
+        }}
+      </span>
+    </p>
+  </footer>
 </div>

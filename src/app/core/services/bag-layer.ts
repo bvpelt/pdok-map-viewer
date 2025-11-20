@@ -7,14 +7,11 @@ import TileGrid from 'ol/tilegrid/TileGrid';
 import VectorTileLayer from 'ol/layer/VectorTile';
 import VectorTileSource from 'ol/source/VectorTile';
 import MVT from 'ol/format/MVT';
-// Fix for TS7006: Import FeatureLike for type safety
 import { FeatureLike } from 'ol/Feature';
-// Import necessary style components
-import { Fill, Stroke, Style } from 'ol/style';
+import { Fill, Stroke, Style, Text } from 'ol/style';
 import { TileMatrixSet, TileMatrix } from '../map/map.interface';
-
-// Define the StyleFunction type inline to fix TS2305 (missing StyleFunction export)
-type StyleFunction = (feature: FeatureLike, resolution: number) => Style | Style[] | void;
+import { StyleFunction } from 'ol/style/Style';
+import { asArray } from 'ol/color';
 
 @Injectable({ providedIn: 'root' })
 export class BagLayerService {
@@ -22,35 +19,25 @@ export class BagLayerService {
   private readonly pdokBaseUrl = 'https://api.pdok.nl/lv/bag/ogc/v1';
   private readonly tileMatrixSetId = 'NetherlandsRDNewQuad';
 
-  /**
-   * Creates a BAG (Basisregistratie Adressen en Gebouwen) vector tile layer
-   * @returns A configured VectorTileLayer for BAG data
-   */
   async createLayer(): Promise<VectorTileLayer> {
     console.log('BAG Layer Service: Starting layer creation');
 
-    // Fetch required configuration
     const tileMatrixSet = await this.getTileMatrixSet();
     if (!tileMatrixSet) {
       throw new Error('Failed to fetch TileMatrixSet from PDOK for BAG');
     }
 
-    // 1. Fetch the Style JSON from the specified endpoint
     const styleJson = await this.getStyleJson();
     if (!styleJson) {
       throw new Error('Failed to fetch style JSON from PDOK for BAG');
     }
 
-    // 2. Create the layer with the tile matrix set and the fetched style
     const layer = this.buildVectorTileLayer(tileMatrixSet, styleJson);
 
     console.log('BAG Layer Service: Layer created successfully');
     return layer;
   }
 
-  /**
-   * Fetches the official PDOK style JSON for the BAG layer.
-   */
   private async getStyleJson(): Promise<any> {
     try {
       const styleId = 'bag_standaardvisualisatie__netherlandsrdnewquad';
@@ -71,12 +58,8 @@ export class BagLayerService {
     }
   }
 
-  /**
-   * Fetches the tile matrix set from PDOK API
-   */
   private async getTileMatrixSet(): Promise<TileMatrixSet | null> {
     try {
-      // Use the standard endpoint for the TileMatrixSet definition
       const url = `${this.pdokBaseUrl}/tileMatrixSets/${this.tileMatrixSetId}`;
       console.log('BAG Layer Service: Fetching tile matrix set from:', url);
 
@@ -95,8 +78,203 @@ export class BagLayerService {
   }
 
   /**
-   * Builds a vector tile layer with the correct tile grid configuration and style.
+   * Converts Mapbox GL color to OpenLayers color format
+   * Handles strings, arrays, and Mapbox GL expressions
    */
+  private parseColor(color: any, opacity: number = 1): string {
+    if (!color) return `rgba(0, 0, 0, ${opacity})`;
+
+    // If color is an array (Mapbox GL expression), extract the actual color value
+    if (Array.isArray(color)) {
+      // Handle common Mapbox GL expression patterns
+      // e.g., ["get", "color"] or ["case", condition, trueColor, falseColor]
+      // For simplicity, try to find the first string that looks like a color
+      for (const item of color) {
+        if (
+          typeof item === 'string' &&
+          (item.startsWith('#') || item.startsWith('rgb') || item.startsWith('hsl'))
+        ) {
+          color = item;
+          break;
+        }
+      }
+      // If still an array, use a default color
+      if (Array.isArray(color)) {
+        console.warn('BAG Layer: Complex color expression not fully supported, using default');
+        return `rgba(128, 128, 128, ${opacity})`;
+      }
+    }
+
+    // Ensure color is a string at this point
+    if (typeof color !== 'string') {
+      return `rgba(0, 0, 0, ${opacity})`;
+    }
+
+    // Handle hex colors
+    if (color.startsWith('#')) {
+      const hex = color.replace('#', '');
+      const r = parseInt(hex.substring(0, 2), 16);
+      const g = parseInt(hex.substring(2, 4), 16);
+      const b = parseInt(hex.substring(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+    }
+
+    // Handle rgb/rgba colors
+    if (color.startsWith('rgb')) {
+      if (opacity < 1 && !color.includes('rgba')) {
+        // Convert rgb to rgba with opacity
+        const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        if (match) {
+          return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${opacity})`;
+        }
+      }
+      return color;
+    }
+
+    // Handle hsl colors (basic conversion)
+    if (color.startsWith('hsl')) {
+      // For simplicity, return as-is (browsers support hsl)
+      // You could implement HSL to RGB conversion if needed
+      return color;
+    }
+
+    return color;
+  }
+
+  /**
+   * Creates a style function from Mapbox GL style specification
+   */
+  private createStyleFromMapboxGL(styleJson: any): StyleFunction {
+    console.log('BAG Layer Service: Converting Mapbox GL style to OpenLayers');
+
+    // Parse the Mapbox GL style layers
+    const styleLayers = styleJson.layers || [];
+
+    // Create a map of layer styles by source-layer
+    const layerStyleMap = new Map<string, any[]>();
+
+    styleLayers.forEach((layer: any) => {
+      const sourceLayer = layer['source-layer'];
+      if (sourceLayer) {
+        if (!layerStyleMap.has(sourceLayer)) {
+          layerStyleMap.set(sourceLayer, []);
+        }
+        layerStyleMap.get(sourceLayer)?.push(layer);
+      }
+    });
+
+    console.log('BAG Layer Service: Parsed style layers:', layerStyleMap.size, 'source layers');
+
+    return (feature: FeatureLike, resolution: number): Style | Style[] => {
+      const sourceLayer = feature.get('layer'); // MVT features have a 'layer' property
+
+      if (!sourceLayer) {
+        return new Style(); // Empty style if no layer info
+      }
+
+      const styles: Style[] = [];
+      const layerStyles = layerStyleMap.get(sourceLayer) || [];
+
+      for (const layerStyle of layerStyles) {
+        const layerType = layerStyle.type;
+        const paint = layerStyle.paint || {};
+        const layout = layerStyle.layout || {};
+
+        // Check zoom level constraints
+        const minzoom = layerStyle.minzoom;
+        const maxzoom = layerStyle.maxzoom;
+
+        // Convert resolution to zoom level (approximate)
+        // This is a rough conversion - you may need to adjust based on your tile grid
+        const zoom = Math.log2(156543.03392804097 / resolution);
+
+        if (minzoom !== undefined && zoom < minzoom) continue;
+        if (maxzoom !== undefined && zoom > maxzoom) continue;
+
+        // Check visibility
+        const visibility = layout.visibility;
+        if (visibility === 'none') continue;
+
+        let olStyle: Style | undefined;
+
+        if (layerType === 'fill') {
+          const fillColor = this.parseColor(paint['fill-color'], paint['fill-opacity'] ?? 1);
+          const strokeColor = this.parseColor(paint['fill-outline-color'], 1);
+
+          olStyle = new Style({
+            fill: new Fill({
+              color: fillColor,
+            }),
+            stroke:
+              strokeColor !== 'rgba(0, 0, 0, 1)'
+                ? new Stroke({
+                    color: strokeColor,
+                    width: 1,
+                  })
+                : undefined,
+          });
+        } else if (layerType === 'line') {
+          const lineColor = this.parseColor(paint['line-color'], paint['line-opacity'] ?? 1);
+          const lineWidth = paint['line-width'] ?? 1;
+
+          olStyle = new Style({
+            stroke: new Stroke({
+              color: lineColor,
+              width: lineWidth,
+            }),
+          });
+        } else if (layerType === 'symbol') {
+          // Handle text labels
+          const textField = layout['text-field'];
+          if (textField) {
+            const textColor = this.parseColor(
+              paint['text-color'] ?? '#000000',
+              paint['text-opacity'] ?? 1
+            );
+            const textSize = paint['text-size'] ?? layout['text-size'] ?? 12;
+            const textHaloColor = this.parseColor(paint['text-halo-color'], 1);
+            const textHaloWidth = paint['text-halo-width'] ?? 0;
+
+            // Extract the field name from {field_name} syntax
+            let text = '';
+            if (typeof textField === 'string') {
+              const match = textField.match(/\{([^}]+)\}/);
+              if (match) {
+                const fieldName = match[1];
+                text = feature.get(fieldName) || '';
+              } else {
+                text = textField;
+              }
+            }
+
+            if (text) {
+              olStyle = new Style({
+                text: new Text({
+                  text: text.toString(),
+                  fill: new Fill({ color: textColor }),
+                  stroke:
+                    textHaloWidth > 0
+                      ? new Stroke({
+                          color: textHaloColor,
+                          width: textHaloWidth,
+                        })
+                      : undefined,
+                  font: `${textSize}px sans-serif`,
+                }),
+              });
+            }
+          }
+        }
+
+        if (olStyle) {
+          styles.push(olStyle);
+        }
+      }
+
+      return styles.length > 0 ? styles : new Style();
+    };
+  }
+
   private buildVectorTileLayer(tileMatrixSet: TileMatrixSet, styleJson: any): VectorTileLayer {
     const urlTemplate = `${this.pdokBaseUrl}/tiles/${this.tileMatrixSetId}/{z}/{y}/{x}?f=mvt`;
     console.log('BAG Layer Service: Building layer with URL template:', urlTemplate);
@@ -109,33 +287,26 @@ export class BagLayerService {
     const resolutions: number[] = [];
     const tileSize = 256;
 
-    // Sort tile matrices by scale (descending) to get correct zoom levels (Z0, Z1, Z2, ...)
     const sortedMatrices = [...(tileMatrixSet.tileMatrices || [])].sort(
       (a, b) => b.scaleDenominator - a.scaleDenominator
     );
 
     sortedMatrices.forEach((matrix: TileMatrix) => {
-      // Use the scale factor 0.00028 specific to RD New/PDOK to calculate resolution from scale denominator
       resolutions.push(matrix.scaleDenominator * 0.00028);
     });
 
     console.log('BAG Layer Service: Resolutions calculated:', resolutions.length, 'levels');
 
-    // --- CRITICAL FIX: Zoom Level 12 Restriction ---
+    // Zoom level restriction for Z12
     let maxResolution = Infinity;
     let minResolution = 0;
-
-    // PDOK tiles often start at Z0, so Z12 is at index 12.
-    // To restrict visibility to Z12 only:
-    // 1. maxResolution: Use the resolution of Z11 (index 11). The layer is visible for resolutions *smaller* than this (i.e., Z12 and up).
-    // 2. minResolution: Use the resolution of Z13 (index 13). The layer is visible for resolutions *larger* than this (i.e., Z12 and down).
 
     const Z11_INDEX = 11;
     const Z13_INDEX = 13;
 
     if (resolutions.length > Z13_INDEX) {
-      maxResolution = resolutions[Z11_INDEX]; // Hide when resolution is larger than Z11's (i.e., Z0 to Z11)
-      minResolution = resolutions[Z13_INDEX]; // Hide when resolution is smaller than Z13's (i.e., Z13 and up)
+      maxResolution = resolutions[Z11_INDEX];
+      minResolution = resolutions[Z13_INDEX];
 
       console.log(
         `BAG Layer Service: Restricted visibility to Z12: MaxRes=${maxResolution.toFixed(
@@ -144,45 +315,44 @@ export class BagLayerService {
       );
     } else {
       console.warn(
-        `BAG Layer Service: Insufficient resolutions (${resolutions.length}) to strictly define Z12 range. Layer visibility might be incorrect.`
+        `BAG Layer Service: Insufficient resolutions (${resolutions.length}) to strictly define Z12 range.`
       );
     }
-    // ------------------------------------------------
 
     const extent = projection.getExtent() || [-285401.92, 22598.08, 595401.92, 903401.92];
     const origin = getTopLeft(extent);
 
-    // Create tile grid
     const tileGrid = new TileGrid({
       origin: origin,
       resolutions: resolutions,
       tileSize: tileSize,
     });
 
-    // Create vector tile source
+    // Create tile URL function that forces Z12
+    const tileUrlFunction = (tileCoord: any) => {
+      if (!tileCoord) return undefined;
+
+      // tileCoord is [z, x, y] but we always want to use Z12
+      const z = 12; // Force zoom level 12
+      const x = tileCoord[1];
+      const y = tileCoord[2];
+
+      return `${this.pdokBaseUrl}/tiles/${this.tileMatrixSetId}/${z}/${y}/${x}?f=mvt`;
+    };
+
     const vectorTileSource = new VectorTileSource({
       format: new MVT(),
-      url: urlTemplate,
+      tileUrlFunction: tileUrlFunction,
       projection: projection,
       attributions: ['© Kadaster (BAG)'],
       tileGrid: tileGrid,
+      // Restrict to only load at zoom level 12
+      minZoom: 12,
+      maxZoom: 12,
     });
 
-    // --- Style Application (Placeholder remains) ---
-    const placeholderStyle: StyleFunction = (feature: FeatureLike, resolution: number) => {
-      // Check the 'layer' property on the feature to see which data layer it belongs to (e.g., 'pand')
-      // const featureLayerName = feature.get('layer');
-
-      return new Style({
-        fill: new Fill({
-          color: 'rgba(255, 0, 255, 0.4)',
-        }),
-        stroke: new Stroke({
-          color: '#ff00ff',
-          width: 1.5,
-        }),
-      });
-    };
+    // Create style function from Mapbox GL style
+    const styleFunction = this.createStyleFromMapboxGL(styleJson);
 
     const vectorTileLayer = new VectorTileLayer({
       source: vectorTileSource,
@@ -191,13 +361,12 @@ export class BagLayerService {
         name: 'BAG Panden',
         type: 'overlay',
       },
-      // Apply the computed resolution constraints
       maxResolution: maxResolution,
       minResolution: minResolution,
-      style: placeholderStyle,
+      style: styleFunction,
     });
 
-    console.log('BAG Layer Service: VectorTileLayer created');
+    console.log('BAG Layer Service: VectorTileLayer created with PDOK styling');
     return vectorTileLayer;
   }
 }

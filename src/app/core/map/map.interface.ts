@@ -2,6 +2,7 @@
 export interface TileMatrixSet {
   id: string;
   title?: string;
+  supportedCRS: string;
   crs: string;
   tileMatrices: TileMatrix[]; // Changed from tileMatrix to tileMatrices
   boundingBox?: {
@@ -13,13 +14,13 @@ export interface TileMatrixSet {
 export interface TileMatrix {
   id: string;
   scaleDenominator: number;
-  cellSize: number;
-  cornerOfOrigin?: string;
-  pointOfOrigin: number[];
   tileWidth: number;
   tileHeight: number;
   matrixWidth: number;
   matrixHeight: number;
+  cellSize: number;
+  cornerOfOrigin?: string;
+  pointOfOrigin: number[];
 }
 
 export interface OGCCollection {

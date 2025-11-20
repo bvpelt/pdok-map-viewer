@@ -6,7 +6,6 @@
   display: block;
 }
 */
-
 // Ensure the host element takes up space
 :host {
   display: block;
@@ -14,6 +13,7 @@
   height: 100%;
   min-height: 500px; // Ensure minimum height
 }
+
 
 // Map container needs explicit dimensions for OpenLayers to render
 .map-container {

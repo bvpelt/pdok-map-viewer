@@ -4,14 +4,15 @@ import {
   ViewChild,
   ElementRef,
   effect,
-  ChangeDetectorRef,
   OnDestroy,
+  NgZone,
+  signal,
 } from '@angular/core';
 import { Map, View } from 'ol';
 import { register } from 'ol/proj/proj4';
 import proj4 from 'proj4';
 import { LayerManager } from '../core/services/layer-manager';
-import 'ol/ol.css'; // Import OpenLayers CSS
+import 'ol/ol.css';
 
 @Component({
   selector: 'app-map-panel',
@@ -23,55 +24,58 @@ import 'ol/ol.css'; // Import OpenLayers CSS
 export class MapPanel implements AfterViewInit, OnDestroy {
   @ViewChild('mapTarget') mapTarget!: ElementRef;
   map!: Map;
-  private mapInitialized = false;
 
-  constructor(private layerManager: LayerManager) {
+  // Use a signal to track initialization state so effects can react to it
+  private readonly mapInitialized = signal(false);
+
+  constructor(private layerManager: LayerManager, private ngZone: NgZone) {
     // Register EPSG:28992 projection
     this.registerRDProjection();
 
-    // Effect to reactively add basemaps when they become available
+    // Effect 1: Basemap loading
     effect(() => {
-      console.log('Effect 1 triggered: basemaps effect, map initialized:', this.mapInitialized);
+      const initialized = this.mapInitialized();
+      console.log('Effect 1 triggered: basemaps effect, map initialized:', initialized);
 
-      if (!this.map || !this.mapInitialized) {
+      if (!this.map || !initialized) {
         console.log('Effect 1: Map not ready yet');
         return;
       }
 
       const basemaps = this.layerManager.availableBaseMaps();
+      const activeId = this.layerManager.activeBaseMap();
       console.log('Effect 1: availableBaseMaps changed, count:', basemaps.length);
 
-      // Get current map layers
       const currentMapLayers = this.map.getLayers().getArray();
 
-      // Add any new basemaps to the map
       basemaps.forEach((basemap) => {
         const existingLayer = currentMapLayers.find((l) => l.get('id') === basemap.id);
-
         if (!existingLayer) {
           console.log('Effect 1: Adding basemap to map:', basemap.id);
           basemap.layer.set('isBaseMap', true);
           basemap.layer.set('id', basemap.id);
 
-          // Add layer at the bottom (index 0) so it's behind overlays
-          this.map.getLayers().insertAt(0, basemap.layer);
+          // Set initial visibility based on active basemap
+          const isActive = basemap.id === activeId;
+          basemap.layer.setVisible(isActive);
+          console.log(`Effect 1: Adding basemap ${basemap.id}, visible: ${isActive}`);
 
-          console.log('Effect 1: Basemap added, visible:', basemap.layer.getVisible());
+          this.map.getLayers().insertAt(0, basemap.layer);
         } else {
           console.log('Effect 1: Basemap already exists:', basemap.id);
         }
       });
 
-      // Force map to render
       this.map.render();
       console.log('Effect 1: Map render called');
     });
 
-    // Effect to reactively update basemap visibility
+    // Effect 2: Basemap visibility
     effect(() => {
-      console.log('Effect 2 triggered: visibility effect, map initialized:', this.mapInitialized);
+      const initialized = this.mapInitialized();
+      console.log('Effect 2 triggered: visibility effect, map initialized:', initialized);
 
-      if (!this.map || !this.mapInitialized) {
+      if (!this.map || !initialized) {
         console.log('Effect 2: Map not ready yet');
         return;
       }
@@ -79,7 +83,6 @@ export class MapPanel implements AfterViewInit, OnDestroy {
       const activeId = this.layerManager.activeBaseMap();
       console.log('Effect 2: Active basemap changed to:', activeId);
 
-      // Update visibility of all basemaps
       const basemaps = this.layerManager.availableBaseMaps();
       basemaps.forEach((basemap) => {
         const isActive = basemap.id === activeId;
@@ -87,68 +90,65 @@ export class MapPanel implements AfterViewInit, OnDestroy {
         basemap.layer.setVisible(isActive);
       });
 
-      // Force map to render
       this.map.render();
       console.log('Effect 2: Map render called');
     });
 
-    // Effect to reactively update overlay layers (Add, Remove, and Update Visibility)
+    // Effect 3: Overlay layers (Add/Remove)
     effect(() => {
-      console.log('Effect 3 triggered: overlay layers effect');
+      const initialized = this.mapInitialized();
+      console.log('Effect 3 triggered: overlay layers effect, initialized:', initialized);
 
-      if (!this.map || !this.mapInitialized) {
+      if (!this.map || !initialized) {
         console.log('Effect 3: Map not ready yet');
         return;
       }
 
-      // The layerManager.layers() signal contains the current state of all overlays,
-      // including their OpenLayers layer object and the desired 'visible' state.
       const overlayLayers = this.layerManager.layers();
       console.log('Effect 3: Overlay layers changed, count:', overlayLayers.length);
 
-      // 1. Add new layers and update visibility for existing layers
-      overlayLayers.forEach((appLayer) => {
-        let olLayer = this.map
-          .getLayers()
-          .getArray()
-          .find((l) => l.get('id') === appLayer.id);
+      const currentOLOverlays = this.map
+        .getLayers()
+        .getArray()
+        .filter((olLayer) => olLayer.get('id') && !olLayer.get('isBaseMap'));
 
-        if (!olLayer) {
-          // Layer does not exist on the map yet, so add it
+      // 1. Add new layers
+      overlayLayers.forEach((appLayer) => {
+        if (!currentOLOverlays.find((l) => l.get('id') === appLayer.id)) {
           appLayer.layer.set('id', appLayer.id);
           this.map.addLayer(appLayer.layer);
-          olLayer = appLayer.layer; // Use the newly added layer reference
           console.log('Effect 3: Added overlay layer:', appLayer.id);
-        }
-
-        // **FIX: Explicitly update visibility of the layer**
-        // This handles cases where the layer exists but its visible state in the service has changed.
-        if (olLayer && olLayer.getVisible() !== appLayer.visible) {
-          olLayer.setVisible(appLayer.visible);
-          console.log(`Effect 3: Updated visibility for ${appLayer.id} to ${appLayer.visible}`);
         }
       });
 
-      // 2. Remove layers from the map that are no longer in the service
-      this.map
-        .getLayers()
-        .getArray()
-        // Filter for layers that are overlays (have an 'id' and are NOT a basemap)
-        .filter((olLayer) => olLayer.get('id') && !olLayer.get('isBaseMap'))
-        .forEach((olLayer) => {
-          if (!overlayLayers.find((appLayer) => appLayer.id === olLayer.get('id'))) {
-            this.map.removeLayer(olLayer);
-            console.log('Effect 3: Removed layer:', olLayer.get('id'));
-          }
-        });
+      // 2. Remove layers
+      currentOLOverlays.forEach((olLayer) => {
+        if (!overlayLayers.find((appLayer) => appLayer.id === olLayer.get('id'))) {
+          this.map.removeLayer(olLayer);
+          console.log('Effect 3: Removed layer:', olLayer.get('id'));
+        }
+      });
 
-      // Force map to render to show changes
+      this.map.render();
+    });
+
+    // Effect 4: Monitor layersWithAvailability to update actual visibility
+    effect(() => {
+      const initialized = this.mapInitialized();
+      if (!this.map || !initialized) {
+        return;
+      }
+
+      // This computed signal already handles setting visibility on the OL layers
+      // We just need to trigger this effect when it changes
+      const layersUI = this.layerManager.layersWithAvailability();
+      console.log('Effect 4: Layer availability updated, count:', layersUI.length);
+
       this.map.render();
     });
   }
 
   private registerRDProjection(): void {
-    // Define EPSG:28992 (Amersfoort / RD New - Netherlands)
     proj4.defs(
       'EPSG:28992',
       '+proj=sterea +lat_0=52.15616055555555 +lon_0=5.38763888888889 +k=0.9999079 ' +
@@ -161,72 +161,52 @@ export class MapPanel implements AfterViewInit, OnDestroy {
 
   ngAfterViewInit(): void {
     console.log('=== MapPanel ngAfterViewInit START ===');
-    console.log('MapPanel ngAfterViewInit - mapTarget:', this.mapTarget);
 
-    // Use EPSG:28992 projection centered on the Netherlands
     this.map = new Map({
       target: this.mapTarget.nativeElement,
       view: new View({
         projection: 'EPSG:28992',
-        center: [155000, 463000], // Amersfoort in RD coordinates
-        zoom: 3,
-        extent: [-285401.92, 22598.08, 595401.92, 903401.92], // Netherlands bounds
+        center: [155000, 463000],
+        zoom: 5,
+        extent: [-285401.92, 22598.08, 595401.92, 903401.92],
       }),
     });
 
     console.log('Map object created');
 
-    // Mark map as initialized
-    this.mapInitialized = true;
-    console.log('Map marked as initialized');
+    const view = this.map.getView();
 
-    // Force map to update its size after initialization
-    setTimeout(() => {
-      this.map.updateSize();
-      console.log('Map size updated');
-
-      // Manually trigger adding basemaps if effects haven't run yet
-      const basemaps = this.layerManager.availableBaseMaps();
-      console.log('Available basemaps at init:', basemaps.length);
-
-      if (basemaps.length > 0) {
-        basemaps.forEach((basemap) => {
-          const existingLayer = this.map
-            .getLayers()
-            .getArray()
-            .find((l) => l.get('id') === basemap.id);
-
-          if (!existingLayer) {
-            console.log('Manually adding basemap:', basemap.id);
-            basemap.layer.set('isBaseMap', true);
-            basemap.layer.set('id', basemap.id);
-            this.map.getLayers().insertAt(0, basemap.layer);
+    // Add resolution listener
+    this.ngZone.runOutsideAngular(() => {
+      view.on('change:resolution', () => {
+        this.ngZone.run(() => {
+          const resolution = view.getResolution();
+          if (resolution !== undefined) {
+            console.log('Resolution changed to:', resolution.toFixed(4));
+            this.layerManager.setCurrentResolution(resolution);
           }
         });
+      });
+    });
 
-        // Set visibility based on active basemap
-        const activeId = this.layerManager.activeBaseMap();
-        console.log('Active basemap ID:', activeId);
+    // Set initial resolution
+    const initialResolution = view.getResolution();
+    if (initialResolution !== undefined) {
+      console.log('Initial resolution:', initialResolution.toFixed(4));
+      this.layerManager.setCurrentResolution(initialResolution);
+    }
 
-        basemaps.forEach((basemap) => {
-          const isActive = basemap.id === activeId;
-          console.log(`Setting ${basemap.id} visible: ${isActive}`);
-          basemap.layer.setVisible(isActive);
-        });
-
-        this.map.render();
-      }
-
-      // Log map layers after a moment
-      setTimeout(() => {
-        console.log('=== Current map state ===');
-        console.log('Total map layers:', this.map.getLayers().getLength());
-        this.map.getLayers().forEach((layer, index) => {
-          console.log(`Layer ${index}:`, layer.get('id'), 'visible:', layer.getVisible());
-        });
-        console.log('=== End current map state ===');
-      }, 500);
+    // Update map size after a short delay
+    setTimeout(() => {
+      this.map.updateSize();
+      this.map.render();
+      console.log('Map size updated and rendered');
     }, 100);
+
+    // IMPORTANT: Set initialized to true AFTER everything is set up
+    // This will trigger all effects to re-run
+    this.mapInitialized.set(true);
+    console.log('Map marked as initialized - effects will now run');
 
     console.log('=== MapPanel ngAfterViewInit END ===');
   }
