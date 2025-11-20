@@ -47,6 +47,7 @@ export class LayerManager {
     this.initializeBaseMapsAsync().then(() => {
       console.log('LayerManager backgrounds loaded');
     });
+    
     this.initializeDefaultOverlayAsync().then(() => {
       console.log('LayerManager overlays loaded');
     });
