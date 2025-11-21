@@ -7,8 +7,22 @@ import TileGrid from 'ol/tilegrid/TileGrid';
 import VectorTileLayer from 'ol/layer/VectorTile';
 import VectorTileSource from 'ol/source/VectorTile';
 import MVT from 'ol/format/MVT';
-import { TileMatrixSet, TileMatrix } from '../map/map.interface';
 import { applyStyle } from 'ol-mapbox-style';
+
+interface TileJSON {
+  tilejson: string;
+  name?: string;
+  description?: string;
+  version?: string;
+  attribution?: string;
+  scheme?: string;
+  tiles: string[];
+  minzoom?: number;
+  maxzoom?: number;
+  bounds?: number[];
+  center?: number[];
+  vector_layers?: any[];
+}
 
 @Injectable({ providedIn: 'root' })
 export class BagLayerService {
@@ -19,9 +33,9 @@ export class BagLayerService {
   async createLayer(): Promise<VectorTileLayer> {
     console.log('BAG Layer Service: Starting layer creation');
 
-    const tileMatrixSet = await this.getTileMatrixSet();
-    if (!tileMatrixSet) {
-      throw new Error('Failed to fetch TileMatrixSet from PDOK for BAG');
+    const tileJson = await this.getTileJson();
+    if (!tileJson) {
+      throw new Error('Failed to fetch TileJSON from PDOK for BAG');
     }
 
     const styleJson = await this.getStyleJson();
@@ -29,10 +43,30 @@ export class BagLayerService {
       throw new Error('Failed to fetch style JSON from PDOK for BAG');
     }
 
-    const layer = await this.buildVectorTileLayer(tileMatrixSet, styleJson);
+    const layer = await this.buildVectorTileLayer(tileJson, styleJson);
 
     console.log('BAG Layer Service: Layer created successfully');
     return layer;
+  }
+
+  private async getTileJson(): Promise<TileJSON | null> {
+    try {
+      const url = `${this.pdokBaseUrl}/tiles/${this.tileMatrixSetId}?f=tilejson`;
+      console.log('BAG Layer Service: Fetching TileJSON from:', url);
+
+      const response = await firstValueFrom(
+        this.http.get<TileJSON>(url, {
+          headers: { Accept: 'application/json' },
+        })
+      );
+
+      console.log('BAG Layer Service: TileJSON fetched successfully');
+      console.log('BAG Layer Service: Min zoom:', response.minzoom, 'Max zoom:', response.maxzoom);
+      return response;
+    } catch (error) {
+      console.error('BAG Layer Service: Error fetching TileJSON:', error);
+      return null;
+    }
   }
 
   private async getStyleJson(): Promise<any> {
@@ -55,93 +89,130 @@ export class BagLayerService {
     }
   }
 
-  private async getTileMatrixSet(): Promise<TileMatrixSet | null> {
-    try {
-      const url = `${this.pdokBaseUrl}/tileMatrixSets/${this.tileMatrixSetId}`;
-      console.log('BAG Layer Service: Fetching tile matrix set from:', url);
+  /**
+   * Creates resolutions array for RD New projection
+   * Based on the standard RD New tile matrix set
+   */
+  private createRDNewResolutions(): number[] {
+    const resolutions: number[] = [];
+    // Standard RD New resolutions from PDOK
+    // These match the NetherlandsRDNewQuad tile matrix set
+    const maxResolution = 3440.64; // Resolution at zoom level 0
 
-      const response = await firstValueFrom(
-        this.http.get<TileMatrixSet>(url, {
-          headers: { Accept: 'application/json' },
-        })
-      );
-
-      console.log('BAG Layer Service: Tile matrix set fetched successfully');
-      return response;
-    } catch (error) {
-      console.error('BAG Layer Service: Error fetching tile matrix set:', error);
-      return null;
+    for (let i = 0; i < 17; i++) {
+      resolutions.push(maxResolution / Math.pow(2, i));
     }
+
+    console.log('BAG Layer Service: Created', resolutions.length, 'resolution levels');
+    return resolutions;
   }
 
-  private async buildVectorTileLayer(
-    tileMatrixSet: TileMatrixSet,
-    styleJson: any
-  ): Promise<VectorTileLayer> {
+  private async buildVectorTileLayer(tileJson: TileJSON, styleJson: any): Promise<VectorTileLayer> {
     const projection = getProjection('EPSG:28992');
     if (!projection) {
       throw new Error('EPSG:28992 projection not found');
     }
 
-    const resolutions: number[] = [];
-    const tileSize = 256;
+    const resolutions = this.createRDNewResolutions();
 
-    const sortedMatrices = [...(tileMatrixSet.tileMatrices || [])].sort(
-      (a, b) => b.scaleDenominator - a.scaleDenominator
+    // Get zoom constraints from TileJSON
+    const minZoom = tileJson.minzoom ?? 0;
+    const maxZoom = tileJson.maxzoom ?? 16;
+
+    console.log(`BAG Layer Service: Layer zoom range: ${minZoom} to ${maxZoom}`);
+
+    // Calculate resolution constraints based on zoom levels
+    // We want the layer VISIBLE across multiple zoom levels (e.g., Z11-Z13)
+    // but always LOAD tiles from Z12 only
+
+    const z12Resolution = resolutions[12];
+
+    // Make layer visible from Z11 to Z13 (reasonable range around Z12)
+    // maxResolution: visible when resolution < this value
+    // To include Z11 (which has HIGHER resolution than Z12), use Z11's resolution
+    const maxResolution = resolutions[12]; //resolutions[11]; // ~1.68 - Layer visible when current resolution < 1.68 (includes Z11, Z12, Z13...)
+
+    // minResolution: visible when resolution > this value
+    // To include Z13 (which has LOWER resolution than Z12), use Z13's resolution
+    const minResolution = resolutions[13]; // ~0.42 - Layer visible when current resolution > 0.42 (includes Z13, Z12, Z11...)
+
+    console.log(`BAG Layer Service: Visibility window Z11-Z13:`);
+    console.log(`  Z11 resolution: ${resolutions[11].toFixed(4)}`);
+    console.log(`  Z12 resolution: ${z12Resolution.toFixed(4)}`);
+    console.log(`  Z13 resolution: ${resolutions[13].toFixed(4)}`);
+    console.log(
+      `  Max resolution: ${maxResolution.toFixed(
+        4
+      )} (hide when resolution >= this, i.e., Z10 and more zoomed out)`
     );
-
-    sortedMatrices.forEach((matrix: TileMatrix) => {
-      resolutions.push(matrix.scaleDenominator * 0.00028);
-    });
-
-    console.log('BAG Layer Service: Resolutions calculated:', resolutions.length, 'levels');
-
-    // Zoom level restriction for Z12
-    let maxResolution = Infinity;
-    let minResolution = 0;
-
-    const Z11_INDEX = 11;
-    const Z13_INDEX = 13;
-
-    if (resolutions.length > Z13_INDEX) {
-      maxResolution = resolutions[Z11_INDEX];
-      minResolution = resolutions[Z13_INDEX];
-
-      console.log(
-        `BAG Layer Service: Restricted visibility to Z12: MaxRes=${maxResolution.toFixed(
-          2
-        )}, MinRes=${minResolution.toFixed(4)}`
-      );
-    }
+    console.log(
+      `  Min resolution: ${minResolution.toFixed(
+        4
+      )} (hide when resolution <= this, i.e., Z14 and more zoomed in)`
+    );
 
     const extent = projection.getExtent() || [-285401.92, 22598.08, 595401.92, 903401.92];
     const origin = getTopLeft(extent);
 
-    const tileGrid = new TileGrid({
+    const fullTileGrid = new TileGrid({
       origin: origin,
       resolutions: resolutions,
-      tileSize: tileSize,
+      tileSize: 256,
+      extent: extent,
     });
 
-    // Create tile URL function that forces Z12
-    const tileUrlFunction = (tileCoord: any) => {
-      if (!tileCoord) return undefined;
+    // Use the tile URL from TileJSON
+    const tileUrlTemplate = tileJson.tiles[0];
+    console.log('BAG Layer Service: Using tile URL template:', tileUrlTemplate);
 
-      const z = 12; // Force zoom level 12
-      const x = tileCoord[1];
-      const y = tileCoord[2];
+    // CRITICAL: Custom tile load function that always uses Z12 tiles
+    // regardless of the current map zoom level
+    const tileLoadFunction = (tile: any, src: string) => {
+      // Extract z, x, y from the generated URL
+      const match = src.match(/\/(\d+)\/(\d+)\/(\d+)\?/);
+      if (match) {
+        const [, z, y, x] = match;
 
-      return `${this.pdokBaseUrl}/tiles/${this.tileMatrixSetId}/${z}/${y}/${x}?f=mvt`;
+        // Force Z12 in the URL
+        const z12Url = src.replace(`/${z}/${y}/${x}?`, `/12/${y}/${x}?`);
+
+        // Log for debugging (remove in production)
+        if (z !== '12') {
+          console.log(`BAG: Remapping tile request from Z${z} to Z12`);
+        }
+
+        // Set the corrected URL and load
+        tile.setLoader((extent: any, resolution: number, projection: any) => {
+          fetch(z12Url)
+            .then((response) => response.arrayBuffer())
+            .then((data) => {
+              const format = tile.getFormat();
+              const features = format.readFeatures(data, {
+                extent: extent,
+                featureProjection: projection,
+              });
+              tile.setFeatures(features);
+            })
+            .catch((error) => {
+              console.error('BAG tile load error:', error);
+              tile.setState(3); // ERROR state
+            });
+        });
+      } else {
+        // Fallback - shouldn't happen
+        tile.setLoader(() => {
+          tile.setState(3); // ERROR state
+        });
+      }
     };
 
     const vectorTileSource = new VectorTileSource({
       format: new MVT(),
-      tileUrlFunction: tileUrlFunction,
+      url: tileUrlTemplate,
       projection: projection,
-      attributions: ['© Kadaster (BAG)'],
-      tileGrid: tileGrid,
-      minZoom: 12,
-      maxZoom: 12,
+      attributions: tileJson.attribution ? [tileJson.attribution] : ['© Kadaster (BAG)'],
+      tileGrid: fullTileGrid,
+      tileLoadFunction: tileLoadFunction,
     });
 
     const vectorTileLayer = new VectorTileLayer({
@@ -159,13 +230,17 @@ export class BagLayerService {
     try {
       console.log('BAG Layer Service: Applying Mapbox GL style');
 
-      // Modify the style JSON to point to the correct source
+      // The style JSON from PDOK should already have the correct source configuration
+      // but we can ensure it matches our tile URL
       const modifiedStyle = {
         ...styleJson,
         sources: {
+          ...styleJson.sources,
           bag: {
             type: 'vector',
-            tiles: [`${this.pdokBaseUrl}/tiles/${this.tileMatrixSetId}/{z}/{y}/{x}?f=mvt`],
+            tiles: tileJson.tiles,
+            minzoom: minZoom,
+            maxzoom: maxZoom,
           },
         },
       };
